@@ -1,0 +1,71 @@
+const jwt = require('jsonwebtoken');
+const bcrypt = require ('bcryptjs');
+
+const rootPath = ('../');
+const config = require(rootPath + 'config');
+const {
+    doRequest
+} = require(rootPath + 'helpers/utils');
+const usersModel = require(rootPath + 'models/Users');
+
+const jwtSecret = config.jwtSecret;
+const jwtExpires = config.jwtExpires;
+
+function generateJwt(data) {
+    //here could be some useful user data
+    const payload = {
+        userName: data.userName
+    };
+
+    const accessToken = jwt.sign(payload, Buffer.from(jwtSecret, "base64"),{
+        expiresIn: jwtExpires,
+        algorithm: "HS256"
+    });
+
+    return {
+        jwt: accessToken
+    };
+}
+
+async function singUp(data) {
+    const checkLogin = await usersModel.getUser(data.userName);
+    if (checkLogin.length > 0) {
+        return Promise.reject({
+            error: 'user_already_exists',
+            message: `User with login ${data.userName} already exists`,
+            status: 400
+        });
+    }
+    const password = data.pwd;
+    data.pwd = await bcrypt.hash(password, 10);
+    return usersModel.createUser(data).then(response => {
+        response.pwd = password;
+        return singIn(response);
+    });
+}
+
+async function singIn(data) {
+    const userData = await usersModel.getUser(data.userName);
+    if (userData.length === 0) {
+        return Promise.reject({
+            error: 'user_doesn\'t exist',
+            message: `User with login ${data.userName} doesn\'t exist`,
+            status: 400
+        });
+    }
+    const user = userData[0];
+    if (!bcrypt.compareSync(data.pwd, user.pwd)) {
+        return Promise.reject({
+            error: 'invalid_user_password',
+            message: `Invalid user password`,
+            status: 400
+        });
+    }
+
+    return generateJwt ({userName: data.userName});
+}
+
+module.exports = {
+    singUp,
+    singIn
+};

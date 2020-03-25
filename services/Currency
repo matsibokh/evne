@@ -1,0 +1,65 @@
+const rootPath = ('../');
+const config = require(rootPath + 'config');
+const {doRequest} = require(rootPath + 'helpers/utils');
+const currencyModel = require(rootPath + 'models/Currencies');
+
+function updateCurrencies() {
+    return doRequest({
+        method: 'GET',
+        url: 'https://api.privatbank.ua/p24api/pubinfo?json&exchange&coursid=5'
+    }).then( data => {
+      const responseData = JSON.parse(data);
+      const PromisesArr = responseData.map( obj => {
+          return currencyModel.addNewRate(obj);
+      });
+      return Promise.all(PromisesArr).then((allData) => {
+        return allData;
+      }).catch(err => {
+          console.log(err);
+      })
+    });
+}
+
+async function getCurrency(currencyCode = false) {
+    currencyCode = (currencyCode) ? currencyCode.toUpperCase() : currencyCode;
+    const currencyOptions = (currencyCode) ? { "currencyData.ccy": currencyCode } : {};
+    return currencyModel.getRate(currencyOptions).then( async data => {
+        if ( 0 === data.length ) {
+            data = await updateCurrencies();
+            data = data.filter( obj => {
+                if (currencyCode === obj.currencyData.ccy || !currencyCode) {
+                    return obj
+                }
+            })
+        }
+        const lastUpdate = data[0].update.getTime();
+        if ( lastUpdate < Date.now() - config.currencyUpdateDelay) {
+            await currencyModel.getRate(currencyOptions).then(resp => {
+                if (resp.length > 0) {
+                    addToHistory(resp);
+                }
+            });
+            await currencyModel.dropCollection().catch(err => {
+                console.error("can't remove collection", err)
+            });
+            data = await updateCurrencies();
+        }
+        return data
+    }).then( data => {
+        return data.map( obj => obj.currencyData)
+    }).catch( err => {
+        return err;
+    })
+}
+
+async function addToHistory(data){
+    const historyData = await currencyModel.getHistory();
+    if (historyData.length >= config.currencyHistoryLenght) {
+        currencyModel.deleteFromHistory();
+    }
+    currencyModel.addToHistory(data);
+}
+
+module.exports = {
+    getCurrency
+};
